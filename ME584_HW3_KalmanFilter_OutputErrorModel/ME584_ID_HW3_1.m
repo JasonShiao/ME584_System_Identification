@@ -60,6 +60,49 @@ function [X_pred, X_est, P_pred, P_est] = KalmanFilter(k, A,B,C,D, Y,U, R,S,Q)
     end
 end
 
+function [X_est] = KalmanFilterDARE(k, A,B,C,D, Y,U, K_idare)
+    X_est  = zeros(size(A,1), k);
+    x_est = zeros(size(A,1), 1);
+    for i=1:k
+        %X_est(:,i) = X_pred(:,i) + K_est(:,:,i)*(Y(:,i) - C*X_pred(:,i));
+        x_est = A * x_est + B*U(:,i);
+        x_est = x_est + K_idare * (Y(:,i) - C*x_est);
+        X_est(:,i) = x_est;  % Predicted state
+    end
+end
+
+function [] = PlotResult(X_est, X, k)
+    figure
+    subplot(4,1,1);
+    plot(1:k, X(1,:), 'DisplayName', 'true x_1');
+    hold on;
+    plot(1:k, X_est(1,:), 'DisplayName', 'est x_1')
+    grid on;
+    ylabel('x_1');
+    legend;
+    subplot(4,1,2);
+    plot(1:k, X(2,:), 'DisplayName', 'true x_2');
+    hold on;
+    plot(1:k, X_est(2,:), 'DisplayName', 'est x_2');
+    grid on;
+    ylabel('x_2');
+    legend;
+    
+    subplot(4,1,3);
+    plot(1:k, X(1,:)-X_est(1,:), 'DisplayName', 'x_1_e');
+    grid on;
+    ylabel('x_1_e');
+    legend;
+    
+    subplot(4,1,4);
+    plot(1:k, X(2,:)-X_est(2,:), 'DisplayName', 'x_2_e');
+    grid on;
+    ylabel('x_2_e');
+    legend;
+    hold off
+end
+
+
 % [Optional] convert from continuous time to discrete time
 A_c = [-1/2 0; 1/2 -1/2];
 B_c = [1; 0];
@@ -78,13 +121,24 @@ B_d = [0.0975; 0.0024];
 C_d = [0 1];
 D_d = [0];
 
+% Get observability matrix
+disp(['Observability matrix of pair (A,C)']);
+disp(obsv(A_d, C_d));
+disp(['Observability matrix of pair (A,C) rank: ', num2str(rank(obsv(A_d, C_d)))]);
+
 % Generate process noise and measurement noise from Q and R
 Q = [0.01, 0.0; 0.0, 0.01];
 R = [0.0125];
 S = [0; 0.005];
 [W, V] = noiseSignalGen(R,Q,k);
-Q_2 = [0.0975 0; 0.0024 0.0975]*[0.0975 0; 0.0024 0.0975]';
+% Take into account of the prefix matrix for w(k)
+Q_2 = [0.0975 0; 0.0024 0.0975]*[0.01, 0.0; 0.0, 0.01]*[0.0975 0; 0.0024 0.0975]';
 S_2 = [0.0975 0; 0.0024 0.0975]*S;
+
+% Get reachability matrix of (A,Q^{1/2})
+disp(['Controllability matrix of pair (A,Q^{1/2})']);
+disp(ctrb(A_d,chol(Q)));
+disp(['Controllability matrix of pair (A,Q^{1/2}) rank: ', num2str(rank(ctrb(A_d,chol(Q))))]);
 
 % True output signals
 X = zeros(2,k);
@@ -100,38 +154,21 @@ Y = C_d*X + V;
 [X_pred, X_est, P_pred, P_est] = KalmanFilter(k, A_d,B_d,C_d,D_d, Y,U, R,S_2,Q_2);
 
 
-% Plot
-figure
-subplot(4,1,1);
-plot(1:k, X(1,:), 'DisplayName', 'true x_1');
-hold on;
-plot(1:k, X_est(1,:), 'DisplayName', 'est x_1')
-grid on;
-ylabel('x_1');
-legend;
-subplot(4,1,2);
-plot(1:k, X(2,:), 'DisplayName', 'true x_2');
-hold on;
-plot(1:k, X_est(2,:), 'DisplayName', 'est x_2');
-grid on;
-ylabel('x_2');
-legend;
+% Plot (convention Kalman Filter)
+PlotResult(X_est, X, k);
 
-subplot(4,1,3);
-plot(1:k, X(1,:)-X_est(1,:), 'DisplayName', 'x_1_e');
-grid on;
-ylabel('x_1_e');
-legend;
+P = P_est(:,:,k);
+disp(['P est: ']);
+disp(P);
+%A_d*P*A_d' + Q_2 - (S_2+A_d*P*C_d')/(C_d*P*C_d'+R)*(S_2+A_d*P*C_d')';
 
-subplot(4,1,4);
-plot(1:k, X(2,:)-X_est(2,:), 'DisplayName', 'x_2_e');
-grid on;
-ylabel('x_2_e');
-legend;
-
-hold off
-
-%P = P_est(:,:,k);
-%A_d*P*A_d' + Q_2 - (S_2+A_d*P*C_d')/(C_d*P*C_d'+R)*(S_2+A_d*P*C_d')'
-
+% Design Kalman Filter by DARE
 [P, ~, ~] = idare(A_d', C_d', Q_2, R, S_2, []);
+disp(['P calculated from idare: ']);
+disp(P);
+
+K_idare = P * C_d' / (C_d * P * C_d' + R);
+[X_est_idare] = KalmanFilterDARE(k, A_d,B_d,C_d,D_d, Y,U, K_idare);
+
+% Plot (Kalman Filter by DARE)
+PlotResult(X_est_idare, X, k);
